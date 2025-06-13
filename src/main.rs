@@ -2,7 +2,12 @@
 // The async runtime being used, is `tokio`
 // This starter also has logging, powered by `tracing` and `tracing-subscriber`
 
-use axum::{http::StatusCode, response::IntoResponse, routing::get, Json, Router};
+use axum::{
+    http::{StatusCode, HeaderMap, Method, Uri},
+    response::IntoResponse,
+    routing::any,
+    Json, Router,
+};
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
 
@@ -18,14 +23,12 @@ async fn main() {
         // In order to add a route, we use the `route` method on the router
         // The `route` method takes a path (as a &str), and a handler (MethodRouter)
         // In our invocation below, we create a route, that goes to "/"
-        // We specify what HTTP method we want to accept on the route (via the `get` function)
+        // We use `any()` to accept all HTTP methods (GET, POST, PUT, DELETE, etc.)
         // And finally, we provide our route handler
         // The code of the root function is below
-        .route("/", get(root))
-        // This can be repeated as many times as you want to create more routes
-        // We are also going to create a more complex route, using `impl IntoResponse`
-        // The code of the complex function is below
-        .route("/complex", get(complex));
+        .route("/", any(root))
+        // 添加一个通用路由来处理所有其他请求
+        .fallback(handle_request);
 
     // Next, we need to run our app with `hyper`, which is the HTTP server used by `axum`
     // We need to create a `SocketAddr` to run our server on
@@ -56,23 +59,49 @@ async fn main() {
 // Make sure the function is `async`
 // We specify our return type, `&'static str`, however a route handler can return anything that implements `IntoResponse`
 
-async fn root() -> &'static str {
+async fn root(method: Method, uri: Uri, headers: HeaderMap, body: String) -> &'static str {
+    print_request_info(&method, &uri, &headers, &body).await;
     "Hello, World!"
 }
 
-// This is our route handler, for the route complex
-// Make sure the function is async
-// We specify our return type, this time using `impl IntoResponse`
-
-async fn complex() -> impl IntoResponse {
-    // For this route, we are going to return a Json response
-    // We create a tuple, with the first parameter being a `StatusCode`
-    // Our second parameter, is the response body, which in this example is a `Json` instance
-    // We construct data for the `Json` struct using the `serde_json::json!` macro
+// 通用请求处理函数，用于处理所有其他路由
+async fn handle_request(method: Method, uri: Uri, headers: HeaderMap, body: String) -> impl IntoResponse {
+    print_request_info(&method, &uri, &headers, &body).await;
+    
     (
-        StatusCode::OK,
+        StatusCode::NOT_FOUND,
         Json(serde_json::json!({
-            "message": "Hello, World!"
+            "error": "Route not found",
+            "path": uri.path()
         })),
     )
+}
+
+// 打印请求信息的辅助函数
+async fn print_request_info(method: &Method, uri: &Uri, headers: &HeaderMap, body: &str) {
+    tracing::info!("=== Request Received ===");
+    tracing::info!("Method: {}", method);
+    tracing::info!("URI: {}", uri);
+    tracing::info!("Path: {}", uri.path());
+    
+    if let Some(query) = uri.query() {
+        tracing::info!("Query String: {}", query);
+    }
+    
+    tracing::info!("Headers:");
+    for (key, value) in headers.iter() {
+        match value.to_str() {
+            Ok(v) => tracing::info!("  {}: {}", key, v),
+            Err(_) => tracing::info!("  {}: <Binary Data>", key),
+        }
+    }
+    
+    tracing::info!("Body:");
+    if body.is_empty() {
+        tracing::info!("  <Empty>");
+    } else {
+        tracing::info!("  {}", body);
+    }
+    
+    tracing::info!("=== End of Request Info ===");
 }
